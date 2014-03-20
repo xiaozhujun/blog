@@ -1,0 +1,12 @@
+cd /home/taoli 
+tar zxvf httpd-2.2.22.tar.gz ¨CC ./ 
+ 
+tar zxvf httpd-2.2.22.tar.gz 
+ 
+cd /usr/local/httpd-2.0.54 
+./configure --prefix=/home/taoli/apache --enable-cgi --enable-so --enable-rewrite --enable-info --enable-speling --enable-mime-magic --enable-ssl 
+ 
+./configure --prefix=/home/ibm/software/apache --enable-mods-shared=all --enable-cgi --enable-rewrite --with-mpm=prefork --enable-module=most --enable-proxy --enable-proxy-ajp --enable-forward --enable-proxy-connect --enable-proxy-http --enable-so --enable-deflate --enable-headers --enable-include --enable-ssl
+ 
+make 
+make install 
