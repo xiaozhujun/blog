@@ -1,0 +1,123 @@
+Tomcat和Openssl构建HTTPS双向认证  
+
+2011-12-26 17:19:32|  分类： 工作积累 |  标签：linux  https  openssl+tomcat  openssl  tomcat+ssl   |举报|字号 订阅
+
+一、源码安装及证书申请与签发
+#tar openssl-0.9.8e.tar.gz
+#cd openssl-0.9.8e
+#./config --prefix=/usr/local --openssldir=/usr/local/openssl
+#make&& make install
+
+
+cp /home/openssl-0.9.8e/apps/demoCA/ /usr/local/openssl/ -rf
+cd /usr/local/openssl/demoCA
+mkdir newcerts
+#cd /usr/local/openssl
+
+1、创建服务器证书、客户端证书以及CA
+openssl req -new -x509 -keyout ca/ca.key -out ca/ca.crt -config openssl.cnf -days 1095      123456  (CA 的私钥设置为：123456)
+CN  Henan  Zhengzhou  RF（下边服务器端和客户端申请的时候要保持一致）  CAServer   CA机构名称（或者CA所在主机名）Shuju   空
+
+
+2、生成服务器端私钥和证书请求
+openssl genrsa -out server/server.key 1024
+openssl req -new -key server/server.key -out server/server.csr -config openssl.cnf           1234561（服务器端的私钥）   Renfeng
+CN  Henan  Zhengzhou RF Server  192.0.0.12（服务器的IP地址） 空   空   服务器提供服务的公司名字Lianxiang
+
+3、生成客户端私钥和请求
+openssl    genrsa   -des3    -out   private/privatekey.key    1024       
+1234562（客户端私钥）
+openssl req -new -key private/privatekey.key -out private/privatekey.csr -config openssl.cnf         1234562
+CN  Henan  Nanyang RF   Client  Taobao(客户端机构名称)  空               回车 Taobao
+
+
+4、通过CA签发证书
+4.1、签发服务器端证书server.crt
+openssl ca -in server/server.csr -out server/server.crt -cert ca/ca.crt -keyfile ca/ca.key -config openssl.cnf  
+ 123456   Y   Y 
+
+4.2、签发客户端端证书privatekey.crt
+openssl ca -in private/privatekey.csr -out private/privatekey.crt -cert ca/ca.crt -keyfile ca/ca.key -config openssl.cnf 
+ 123456
+
+
+5、生成pkcs12格式证书
+在tomcat中实现双向认证有时需要pkcs12格式的证书（该证书包含根证书、服务器端或客户端的证书和密钥文件）
+
+
+5.1、生成pkcs12服务器证书tomcat.p12，设置密码为1234563
+openssl pkcs12 -export -in server/server.crt -inkey server/server.key -out server/tomcat.p12 -name tomcat -CAfile ca/ca.crt -caname root -chain
+1234563(后边Tomcat的配置文件中需要)
+
+ 
+
+5.2、生成pkcs12客户端证书client1.p12,设置密码为1234562
+
+openssl pkcs12 -export -in private/privatekey.crt -inkey private/privatekey.key -out private/client1.p12 -name client1 -chain -CAfile ca/ca.crt 
+1234562  回车(设置密码为空，在用户导入时不用输入密码) 回车
+
+ 
+
+6、有时可能需要别的格式的证书
+
+生成pem格式证书
+
+cat private/privatekey.crt  private/privatekey.key> private/privatekey.pem
+
+cat server/server.crt  server/server.key > server/server.pem
+
+
+二、tomcat实现双向认证
+按照以上方法证书生成后，我们再配置TomCat即可实现双向认证。此时服务器端我们只用到服务器端pkcs12格式的证书tomcat.p12和CA的根证书ca.crt即可，客户端用到pkcs12格式的证书client1.p12。
+
+ 
+
+1、将以上创建的证书server.crt和tomcat.p12拷贝到tomcat主目录下的conf文件夹下。
+cp server/server.crt server/tomcat.p12 /home/apache-tomcat-6.0.35/conf/
+
+ 
+
+2、创建服务器信任的CA证书库
+把ca.crt证书导入信任证书库，命令行模式进入tomcat主目录下的conf目录，执行以下命令： 
+cd /home/apache-tomcat-6.0.35/conf/
+keytool -keystore truststore.jks -keypass 111111 -storepass 111111 -alias ca -import -trustcacerts -file /usr/local/openssl/ca/ca.crt
+
+*如果出现ca已经存在的错误，keytool -delete -alias ca -keystore truststore.jks      111111（keytool的密码，上一次使用时使用的密码）
+
+可以用以下命令查看信任证书库内容：
+keytool -keystore truststore.jks -keypass 111111 -storepass 111111 -list -v
+
+(
+ 参考修改keytool的密码：
+ keytool -storepasswd -new 123456  -storepass 111111 -keystore truststore.jks
+  其中-storepass指定原密码，-new指定新密码。
+  keytool -delete -alias ca -keystore truststore.jks  要求输入的密码就是上边修改的密码
+
+)
+
+ 
+
+3、配置Tomcat支持HTTPS双向认证
+修改tomcat的conf目录里的server.xml文件（$TOMCAT_HOME/conf/server.xml），找到类似下面内容的配置处，添加配置如下：
+
+<Connector port="8443" protocol="HTTP/1.1" SSLEnabled="true"
+               maxThreads="150" scheme="https" secure="true"
+               clientAuth="true" sslProtocol="TLS"
+        keystoreFile="conf/tomcat.p12" keystorePass="1234563" keystoreType="PKCS12"
+        truststoreFile="conf/truststore.jks" truststorePass="111111" truststoreType="JKS"
+ />
+
+配置好后，重启tomcat，
+
+/home/apache-tomcat-6.0.35/bin/catalina.sh stop
+
+/home/apache-tomcat-6.0.35/bin/catalina.sh start
+
+可以监控8443端口看https是否启动起来：
+
+netstat –an|grep 8443
+tcp       0      0 :::8443                     :::*                    LISTEN
+
+
+三、客户端安装证书：
+客户端导入client1.p12 证书，windows系统双击安装即可，通过浏览器https方式访问服务器的web时会提示选择证书。
